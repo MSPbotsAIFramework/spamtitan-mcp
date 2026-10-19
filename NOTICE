@@ -1,0 +1,9 @@
+SpamTitan MCP Server
+Copyright 2026 MSPbots.ai
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"SpamTitan" is a trademark of its respective owner. This project is an
+independent integration that calls the documented SpamTitan REST API; it
+contains no SpamTitan source code and is not affiliated with or endorsed by
+the SpamTitan vendor.
