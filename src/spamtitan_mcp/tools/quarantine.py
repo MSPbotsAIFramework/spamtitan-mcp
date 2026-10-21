@@ -27,6 +27,7 @@ from ._common import (
     ClientFactory,
     MessageId,
     compact,
+    enum_value,
     rows,
     run_tool,
     strip_meta,
@@ -67,19 +68,20 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         sender: Annotated[str | None, Field(description="Sender address; * is a wildcard, e.g. *@example.com.")] = None,
         recipient: Annotated[str | None, Field(description="Recipient address; * is a wildcard.")] = None,
         subject: Annotated[str | None, Field(description="Subject; * is a wildcard, e.g. *invoice*.")] = None,
-        reason: Annotated[Reason | None, Field(description="Why it was held (default all).")] = None,
+        reason: Annotated[Reason | str | None, Field(description="Why it was held (default all).")] = None,
     ) -> str:
         """List quarantined mail, newest first: sender, recipient, subject, spam score and category."""
 
         async def action(client: SpamTitanClient) -> dict:
             size = per_page or 50
             current = page or 1
+            held = enum_value(reason, Reason)
             params = compact(
                 {
                     "sender": sender,
                     "recipient": recipient,
                     "subject": subject,
-                    "type": reason if reason and reason != "all" else None,
+                    "type": held if held and held != "all" else None,
                     "sortkey": "message_received",
                     "sortdir": "desc",
                     "results": size,

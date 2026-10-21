@@ -258,3 +258,16 @@ async def test_stats_default_today(monkeypatch):
     rec = Recorder({"reports/scan-summary": REPORT})
     result = await _call(monkeypatch, rec, "spamtitan_get_stats", {})
     assert rec.requests[0].url.params["period"] == "today" and result["domain"] == "all"
+
+
+@pytest.mark.parametrize("given,sent", [("VIRUS", "virus"), ("Content-Filter", "content-filter"), ("phishing", "phishing")])
+async def test_queue_reason_normalized_or_passed_through(monkeypatch, given, sent):
+    rec = Recorder()
+    await _call(monkeypatch, rec, "spamtitan_get_queue", {"reason": given})
+    assert rec.requests[0].url.params["type"] == sent
+
+
+async def test_queue_reason_all_in_any_case_sends_no_type(monkeypatch):
+    rec = Recorder()
+    await _call(monkeypatch, rec, "spamtitan_get_queue", {"reason": "ALL"})
+    assert "type" not in rec.requests[0].url.params
