@@ -271,3 +271,93 @@ async def test_queue_reason_all_in_any_case_sends_no_type(monkeypatch):
     rec = Recorder()
     await _call(monkeypatch, rec, "spamtitan_get_queue", {"reason": "ALL"})
     assert "type" not in rec.requests[0].url.params
+
+
+# ---- Page-number paging that survives truncation (offset / next_offset) -----------------------------
+# Self-test checklist: a cut page continues right after the last message returned (from page 1 and
+# from a later page); offset aligned / not aligned to a page; offset past the end; offset wins over
+# page; page-only calls send the same request as before; no retry hint for a page size.
+
+TOTAL = 137
+LONG = "x" * 70
+BIG = [
+    {
+        "id": f"m{i:03d}", "sender": f"{i}-{LONG}@a.example", "recipient": f"{i}-{LONG}@b.example", "subject": f"{i} {LONG}",
+        "client_address": f"{i} {LONG}", "country_of_origin": f"{i} {LONG}", "message_received": f"{i} {LONG}", "content_type": "S",
+    }
+    for i in range(TOTAL)
+]
+SMALL = [{"id": f"m{i:03d}", "content_type": "S"} for i in range(TOTAL)]
+
+
+def _queue_api(messages):
+    """Pages by page + results like SpamTitan (default 50 per page)."""
+
+    def reply(request):
+        params = request.url.params
+        number, size = int(params.get("page", 1)), int(params.get("results", 50))
+        chunk = messages[(number - 1) * size : number * size]
+        return httpx.Response(200, json={"data": chunk, "total": len(messages), "count": len(chunk)})
+
+    return Recorder({"GET quarantine": reply})
+
+
+def _sent(request):
+    return int(request.url.params["page"]), int(request.url.params["results"])
+
+
+async def _walk(monkeypatch, rec, args):
+    ids, calls, cut = [], 0, 0
+    while True:
+        result = await _call(monkeypatch, rec, "spamtitan_get_queue", args)
+        calls += 1
+        assert "retry_page_size" not in result, result.get("note")
+        cut += bool(result.get("truncated"))
+        ids += [m["id"] for m in result["messages"]]
+        if result.get("next_offset") is None:
+            return ids, cut
+        args = {k: v for k, v in args.items() if k != "page"} | {"offset": result["next_offset"]}
+        assert calls < 200
+
+
+async def test_queue_cut_pages_continue_without_gaps_from_page_1(monkeypatch):
+    ids, cut = await _walk(monkeypatch, _queue_api(BIG), {"per_page": 50})
+    assert cut > 0  # pages really were cut
+    assert ids == [m["id"] for m in BIG]  # no gaps, no duplicates
+
+
+async def test_queue_cut_pages_continue_without_gaps_from_a_later_page(monkeypatch):
+    ids, cut = await _walk(monkeypatch, _queue_api(BIG), {"page": 3, "per_page": 40})
+    assert cut > 0
+    assert ids == [m["id"] for m in BIG[80:]]
+
+
+@pytest.mark.parametrize("offset,size,page,first", [(30, 25, 2, "m030"), (50, 25, 3, "m050"), (0, 25, 1, "m000"), (60, None, 2, "m060")])
+async def test_queue_offset_reads_the_page_that_holds_it(monkeypatch, offset, size, page, first):
+    rec = _queue_api(SMALL)
+    result = await _call(monkeypatch, rec, "spamtitan_get_queue", {"offset": offset} | ({"per_page": size} if size else {}))
+    size = size or 50
+    assert _sent(rec.requests[0]) == (page, size)
+    assert result["messages"][0]["id"] == first and (result["offset"], result["page"]) == (offset, page)
+    assert result["next_offset"] == page * size  # rest of the page returned, next page starts after it
+
+
+async def test_queue_offset_past_the_end_is_empty(monkeypatch):
+    result = await _call(monkeypatch, _queue_api(SMALL), "spamtitan_get_queue", {"offset": 500, "per_page": 25})
+    assert (result["messages"], result["count"], result["has_more"], result.get("next_offset")) == ([], 0, False, None)
+
+
+async def test_queue_offset_wins_over_page(monkeypatch):
+    rec = _queue_api(SMALL)
+    result = await _call(monkeypatch, rec, "spamtitan_get_queue", {"offset": 10, "page": 4, "per_page": 10})
+    assert _sent(rec.requests[0]) == (2, 10) and result["messages"][0]["id"] == "m010"
+
+
+@pytest.mark.parametrize("args,sent", [({"page": 2, "per_page": 25}, ("2", "25")), ({"page": 2}, ("2", "50")), ({}, ("1", "50"))])
+async def test_queue_page_only_sends_the_same_request_as_before(monkeypatch, args, sent):
+    rec = _queue_api(SMALL)
+    result = await _call(monkeypatch, rec, "spamtitan_get_queue", args)
+    assert dict(rec.requests[0].url.params) == {"sortkey": "message_received", "sortdir": "desc", "results": sent[1], "page": sent[0]}
+    number, size = int(sent[0]), int(sent[1])
+    assert [m["id"] for m in result["messages"]] == [f"m{i:03d}" for i in range((number - 1) * size, number * size)]
+    assert (result["page"], result["offset"], result["next_offset"], result["has_more"]) == (number, (number - 1) * size, number * size, True)

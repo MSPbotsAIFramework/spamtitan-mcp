@@ -26,8 +26,10 @@ from ._common import (
     RELEASE,
     ClientFactory,
     MessageId,
+    Offset,
     compact,
     enum_value,
+    locate,
     rows,
     run_tool,
     strip_meta,
@@ -69,12 +71,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
         recipient: Annotated[str | None, Field(description="Recipient address; * is a wildcard.")] = None,
         subject: Annotated[str | None, Field(description="Subject; * is a wildcard, e.g. *invoice*.")] = None,
         reason: Annotated[Reason | str | None, Field(description="Why it was held (default all).")] = None,
+        offset: Offset = None,
     ) -> str:
         """List quarantined mail, newest first: sender, recipient, subject, spam score and category."""
 
         async def action(client: SpamTitanClient) -> dict:
-            size = per_page or 50
-            current = page or 1
+            current, size, start = locate(offset, page, per_page)
             held = enum_value(reason, Reason)
             params = compact(
                 {
@@ -89,8 +91,10 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                 }
             )
             payload = await client.get("quarantine", params)
-            messages = [_summary(m) for m in rows(payload)]
+            listed = [_summary(m) for m in rows(payload)]
+            messages = listed[start - (current - 1) * size :]
             total = payload.get("total") if isinstance(payload, dict) else None
+            more = (current * size < total) if isinstance(total, int) else len(listed) >= size
             return compact(
                 {
                     "messages": messages,
@@ -98,7 +102,12 @@ def register(mcp: FastMCP, client_factory: ClientFactory) -> None:
                     "total": total,
                     "page": current,
                     "per_page": size,
-                    "has_more": (current * size < total) if isinstance(total, int) else len(messages) >= size,
+                    "has_more": more,
+                    "offset": start,
+                    # Continues right after the last message returned, also when the result is cut
+                    # to fit the size limit (a page number cannot: the rest of a cut page is on no other page).
+                    "next_offset": start + len(messages) if more else None,
+                    "_resume": {"key": "next_offset", "start": start},
                 }
             )
 

@@ -40,7 +40,7 @@ All tools return a JSON string.
 |---|---|---|
 | `spamtitan_navigate` | Describe the tools of one area (changes nothing) | **domain** (`quarantine`, `lists`, `stats`) |
 | `spamtitan_status` | Check the connection: server reachable, token accepted | - |
-| `spamtitan_get_queue` | List quarantined mail, newest first: sender, recipient, subject, spam score, category | page, per_page, sender, recipient, subject, reason (`spam`, `virus`, `banned`, `content-filter`, `archive`, `all`) |
+| `spamtitan_get_queue` | List quarantined mail, newest first: sender, recipient, subject, spam score, category | page, per_page, offset, sender, recipient, subject, reason (`spam`, `virus`, `banned`, `content-filter`, `archive`, `all`) |
 | `spamtitan_get_message` | One quarantined message: score, virus / filter hit, country, SMTP details | **message_id** |
 | `spamtitan_release_message` | Release a message to its recipient or another address (**write**) | **message_id**, forward_to |
 | `spamtitan_delete_message` | Permanently delete a quarantined message (**write**, irreversible) | **message_id** |
@@ -126,6 +126,10 @@ uv run pytest
 - **No interactive prompts.** Older versions asked the user for a recipient before an
   unfiltered queue listing, which a stateless gateway cannot relay; the queue now pages
   instead.
+- **Queue paging.** SpamTitan pages by number only. The queue also takes `offset` (a message
+  position that overrides `page`) and returns `next_offset`: when a page is too large for one
+  response and is cut, `next_offset` starts right after the last message returned, which no page
+  number can.
 
 ## License
 

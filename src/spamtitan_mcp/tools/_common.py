@@ -42,10 +42,27 @@ NOT_CONFIGURED = error_envelope(
 _MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 MessageId = Annotated[str, Field(description="Quarantined message id from spamtitan_get_queue.", min_length=1)]
+Offset = Annotated[
+    int | None,
+    Field(description="Record position to start from (0-based, overrides page); pass next_offset from the previous result.", ge=0),
+]
+
+DEFAULT_PAGE_SIZE = 50
 
 
 def compact(values: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in values.items() if v is not None}
+
+
+def locate(offset: int | None, page: int | None, page_size: int | None) -> tuple[int, int, int]:
+    """(page, page size, start) for a read from record ``start``.
+
+    SpamTitan pages by number only, so a position is reached by asking for the page that
+    holds it (same page size) and skipping the records before it.
+    """
+    size = page_size or DEFAULT_PAGE_SIZE
+    start = offset if offset is not None else ((page or 1) - 1) * size
+    return start // size + 1, size, start
 
 
 def message_id(value: str) -> str:
